@@ -9,6 +9,6 @@ let config_env = [
     ];
 in pkgs.dockerTools.buildImage {
   name = "sirius-base";
-  contents = [ pkgs.busybox pkgs.iana-etc pkgs.tini pkgs.cacert pkgs.gettext ];
+  contents = [ pkgs.busybox pkgs.iana-etc pkgs.cacert ];
   config.Env = config_env;
 } // { passthru = { configEnv = config_env; }; }
