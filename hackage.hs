@@ -21,6 +21,7 @@ import Control.DeepSeq
 import Development.Shake
 import Development.Shake.FilePath
 import Data.Aeson
+import Data.Char (isSpace)
 import Data.Maybe
 import Data.List.Split (splitWhen)
 import Data.Yaml qualified as YAML
@@ -140,7 +141,7 @@ main = do
         let andPatch = when (exists) $ command_ [FileStdin patch_name] "patch" [fname]
         get_source (PkgName pkg) >>= \case
           SourceCabal v           -> do
-            mrevision <- listToMaybe <$> readFileLines "hackage-revision.txt" -- FIXME !!
+            mrevision <- readHackageRevision
             cabal2nixHackage fname pkg v mrevision
             andPatch
           SourceGit git  msubpath -> do
@@ -177,6 +178,16 @@ cabal2nixGit fname Git{..} msubpath = command_ [FileStdout fname] "cabal2nix" $
   case msubpath of
     Nothing -> []
     Just s  -> ["--subpath", s]
+
+readHackageRevision :: Action (Maybe FilePath)
+readHackageRevision = do
+  ls <- readFileLines "hackage-revision.txt"
+  case filter (not . null) $ map trim ls of
+    [] -> pure Nothing
+    [x] -> pure $ Just x
+    _   -> error "Multiple lines in hackage-revision.txt"
+    where
+      trim = reverse . dropWhile isSpace . reverse . dropWhile isSpace
 
 
 ----------------------------------------------------------------
