@@ -85,13 +85,20 @@ instance FromJSON Git where
     gitRev     <- o .: "rev"
     pure Git{..}
 
+-- | Newtype wrapper which accepts NULL
+newtype OrNull a = OrNull (Map.Map String a)
+
+instance FromJSON a => FromJSON (OrNull a) where
+  parseJSON Null = pure $ OrNull mempty
+  parseJSON o    = OrNull <$> parseJSON o
+
 
 main :: IO ()
 main = do
   shakeArgs shakeOptions $ do
     -- Read list of packages to build and create necessary oracles
-    pkgs_set :: Map.Map String Source <- YAML.decodeFileThrow "packages.yaml"
-    repo_set :: Map.Map String Git    <- YAML.decodeFileThrow "repo.yaml"
+    OrNull (pkgs_set :: Map.Map String Source) <- YAML.decodeFileThrow "packages.yaml"
+    OrNull (repo_set :: Map.Map String Git)    <- YAML.decodeFileThrow "repo.yaml"
     get_source <- addOracle $ \(PkgName nm) -> do
       case nm `Map.lookup` pkgs_set of
         Just s  -> pure s
