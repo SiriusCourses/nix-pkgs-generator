@@ -40,12 +40,14 @@ import Debug.Trace
 --
 ----------------------------------------------------------------
 
+-- | Key to lookup source for given package.
 newtype PkgName = PkgName String
   deriving stock   (Show, Eq, Generic)
   deriving newtype (Hashable, Binary, NFData)
 
 type instance RuleResult PkgName = Source
 
+-- | Key to lookup repository information
 newtype Repository = Repository String
   deriving stock   (Show, Eq, Generic)
   deriving newtype (Hashable, Binary, FromJSON, NFData)
