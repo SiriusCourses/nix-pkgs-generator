@@ -4,7 +4,8 @@ This is a repository for the nix files that are common a number of projects.
 The purpose of the repo is to keep track of the dependencies, security updates
 and package versions of the entire repo.
 
-The repository contains `nix` that can be included into any repository and scripts that are used to generate nix file and update it accordingly.
+The repository contains `nix` that can be included into any repository and
+scripts that are used to generate nix file and update it accordingly.
 
 ## To run the build
 
@@ -41,24 +42,59 @@ Inputs:
 
 For example:
 
-In the `repo.yaml` we may have a definition of the repo:
+In the `repo.yaml` we may have a definition of the repositories to which package
+definitions may refer:
+
+```yaml
+"cheopslab/cheops-logger":
+  git:    "https://github.com/cheopslab/cheops-logger"
+  rev:    "3f23c216607f804a5fbd8c64df4e1056701e1f84"
+```
+
+`packages.yaml` contain dictionary of with definitions of packages for overlay.
+Packages from hackage could be specified either in full or abbreviated form:
+
+```yaml
+cborg: "0.2.8.0"
+vector:
+  hackage: "0.13.0.0"
+```
+
+Package which are fetched from git repository either specify git repository
+directly:
 
 ```yaml
 "cheopslab/nixpkgs":
-  git:    "https://youruser:yourtoken/cheopslab/nixpkgs"
-  rev:    "994d82c619b9a113638b571aa2d880ab7ca5395a"
-  sha256: "0rshd33xxar09y83isdi8xyxik42sx54hn6z6kp52yd2iqgq044v"
+  git:    "http://github.com/Shimuuar/math-functions.git"
+  rev:    "f746f282a16a0cf407a0a2a90c9797decd878ec3"
+
 ```
 
-Then we can use it in the `packages.yaml` files
+or could refer to repository defined in `repo.yaml` file:
 
 ```yaml
-nixpkgs:
-  repo:    "cheopslab/prometheus-haskell"
-  subpath: "wai-middleware-prometheus"
+wai-middleware-prometheus:
+  repo:    "cheopslab/cheops-logger"
+  subpath: "cheops-logger"
 ```
 
-Then we can change the versions only in the `packages.yaml` file.
+in both case `subpath` could be specified which tell `cabal2nix` that source is
+located in subpath of repository.
+
+For all packages one could specify `parameters` which allows to pass parameters
+to `callPackage`.
+
+```yaml
+splitmix:
+  hackage:    "0.1.0.4"
+  parameters: ["testu01=null"]
+```
+
+This is to allow to override dependencies of package. For example splitmix has
+dummy dependency `testu01`. This allows to provide dependencies.
+```
+  splitmix = ... (prev.callPackage ./pkgs/haskell/splitmix.nix { testu01=null; });
+```
 
 * `patches` - contains patches that are applied to the nix files (will be modified in the future)
 
