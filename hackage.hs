@@ -149,6 +149,9 @@ main = do
         Nothing -> error $ "No such repository: " ++ nm
     get_config <- addOracle $ \ConfigKey -> pure config
     -- Phony targets
+    phony "clean" $ do
+      removeFilesAfter "nix" ["*"]
+      removeFilesAfter "."   [".shake"]
     phony "list-new" $ listNewPackages pkgs_set
     -- Show diff for package in set and latest version
     forM_ [(k,v) | (k, SourceCabal v) <- Map.toList (packageSource <$> pkgs_set)] $ \(pkg, v) -> do

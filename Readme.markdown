@@ -32,7 +32,7 @@ To run test build `cheops-*` packages:
 To cleanup your local environment:
 
 ```console
-[nix-shell:nixpkgs]$ rm ./nix/default.nix ./nix/pkgs/haskell/*
+[nix-shell:nixpkgs]$ runhaskell ./hackage.hs clean
 ```
 
 Inputs:
