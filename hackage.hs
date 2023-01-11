@@ -57,6 +57,26 @@ newtype Repository = Repository String
 
 type instance RuleResult Repository = Git
 
+-- | Key to obtain config
+data ConfigKey = ConfigKey
+  deriving stock    (Show, Eq, Generic)
+  deriving anyclass (Hashable, Binary, FromJSON, NFData)
+
+type instance RuleResult ConfigKey = Config
+
+data Config = Config
+  { cfgRevision   :: String -- ^ Hackage revision
+  , cfgGhcVersion :: String -- ^ GHC version to pass to cabal2nix
+  }
+  deriving stock    (Show, Eq, Generic)
+  deriving anyclass (Hashable, Binary, NFData)
+
+instance FromJSON Config where
+  parseJSON = withObject "Config" $ \o -> do
+    cfgRevision   <- o .: "revision"
+    cfgGhcVersion <- o .: "ghc_version"
+    pure Config{..}
+
 
 -- | Information about package.
 data Package = Package
@@ -118,6 +138,7 @@ main = do
     -- Read list of packages to build and create necessary oracles
     OrNull pkgs_set :: OrNull Package <- YAML.decodeFileThrow "packages.yaml"
     OrNull repo_set :: OrNull Git     <- YAML.decodeFileThrow "repo.yaml"
+    config <- YAML.decodeFileThrow "config.yaml"
     get_source <- addOracle $ \(PkgName nm) -> do
       case nm `Map.lookup` pkgs_set of
         Just s  -> pure s
@@ -126,6 +147,7 @@ main = do
       case nm `Map.lookup` repo_set of
         Just s  -> pure s
         Nothing -> error $ "No such repository: " ++ nm
+    get_config <- addOracle $ \ConfigKey -> pure config
     -- Phony targets
     phony "list-new" $ listNewPackages pkgs_set
     -- Show diff for package in set and latest version
@@ -153,21 +175,21 @@ main = do
     for_ (Map.keys pkgs_set) $ \pkg -> do
       let fname = "nix" </> packageNixName pkg
       fname %%> \_ -> do
+        cfg <- get_config ConfigKey
         let patch_name = "./patches" </> pkg <.> "nix" <.> "patch"
         exists <- doesFileExist patch_name
         when exists $ need [patch_name]
         let andPatch = when exists $ command_ [FileStdin patch_name] "patch" [fname]
         (get_source (PkgName pkg) <&> packageSource) >>= \case
           SourceCabal v           -> do
-            mrevision <- readHackageRevision
-            cabal2nixHackage fname pkg v mrevision
+            cabal2nixHackage fname pkg v cfg
             andPatch
           SourceGit git  msubpath -> do
-            cabal2nixGit fname git msubpath
+            cabal2nixGit fname git cfg msubpath
             andPatch
           SourceRef repo msubpath -> do
             git <- get_git repo
-            cabal2nixGit fname git msubpath >> andPatch
+            cabal2nixGit fname git cfg msubpath >> andPatch
     -- Building nix overlay
     "nix/default.nix" %%> \overlay -> do
       need $ (\x -> "nix" </> packageNixName x) <$> Map.keys pkgs_set
@@ -188,29 +210,22 @@ main = do
     want $ (\x -> "nix" </> packageNixName x) <$> Map.keys pkgs_set
     want ["nix/default.nix"]
 
-cabal2nixHackage :: FilePath -> String -> Version -> Maybe String -> Action ()
-cabal2nixHackage fname pkg v mrevision = command_ [FileStdout fname] "cabal2nix" $
-  [ [fmt|cabal://{pkg}-{showVersion v}|] ]
-     <> maybe [] (\revision  -> ["--hackage-snapshot", revision]) mrevision
+cabal2nixHackage :: FilePath -> String -> Version -> Config -> Action ()
+cabal2nixHackage fname pkg v cfg = command_ [FileStdout fname] "cabal2nix" $
+  [ [fmt|cabal://{pkg}-{showVersion v}|]
+  , "--hackage-snapshot", cfgRevision   cfg
+  , "--compiler",         cfgGhcVersion cfg
+  ]
 
-cabal2nixGit :: FilePath -> Git -> Maybe String -> Action ()
-cabal2nixGit fname Git{..} msubpath = command_ [FileStdout fname] "cabal2nix" $
+cabal2nixGit :: FilePath -> Git -> Config -> Maybe String -> Action ()
+cabal2nixGit fname Git{..} cfg msubpath = command_ [FileStdout fname] "cabal2nix" $
   [ gitURL
   , "--revision", gitRev
+  , "--compiler", cfgGhcVersion cfg
   ] ++
   case msubpath of
     Nothing -> []
     Just s  -> ["--subpath", s]
-
-readHackageRevision :: Action (Maybe FilePath)
-readHackageRevision = do
-  ls <- readFileLines "hackage-revision.txt"
-  case filter (not . null) $ map trim ls of
-    [] -> pure Nothing
-    [x] -> pure $ Just x
-    _   -> error "Multiple lines in hackage-revision.txt"
-    where
-      trim = reverse . dropWhile isSpace . reverse . dropWhile isSpace
 
 
 ----------------------------------------------------------------

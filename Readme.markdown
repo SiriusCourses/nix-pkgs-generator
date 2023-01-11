@@ -39,6 +39,10 @@ Inputs:
 
 * `packages.yaml` -- list of the packages controlled by the system
 * `repo.yaml` -- list of repositories that `packages.yaml` can link to.
+* `config.yaml` -- setting common for all packages.
+  - `revision` hackage revision.
+  - `ghc_version` GHC version to be used by `cabal2nix`. Generated files could
+    be different for different GHC versions.
 
 For example:
 
