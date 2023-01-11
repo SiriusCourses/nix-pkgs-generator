@@ -116,9 +116,23 @@ in pkgs.cheopslab.haskellPackages.ghcWithPackages (p: with p; [
 
 and add `nix build` command to your CI script.
 
+
 ## How to update packages.yaml
 
-Still **TBD**...
+At some point you will want to update to newer set of packages of to newer
+GHC. Process of doing so is depressingly manual. Easiest approach is to use
+cabal solution:
+
+1. Create `cabal.project` in new directory list all packages that are fetched
+   from git there.
+
+2. Run `cabal build all` and immediately interrupt build. We are only interested
+   in build plan. Make sure to use same GHC version since build plan *depends*
+   on it.
+
+3. Run `./sh/extract-cabal.sh path/to/project_dir`. It will produce list of
+   packages that are fetched from hackage. Use it to update `packages.yaml`.
+
 
 ## Dispalying diffs between version on hackage and local
 
