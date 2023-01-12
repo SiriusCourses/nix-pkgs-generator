@@ -57,12 +57,20 @@ newtype Repository = Repository String
 
 type instance RuleResult Repository = Git
 
--- | Key to obtain config
-data ConfigKey = ConfigKey
+-- | Key to obtain hackage revision
+data ConfigRevisionKey = ConfigRevisionKey
   deriving stock    (Show, Eq, Generic)
   deriving anyclass (Hashable, Binary, FromJSON, NFData)
 
-type instance RuleResult ConfigKey = Config
+type instance RuleResult ConfigRevisionKey = String
+
+-- | Key to obtain GHC version
+data ConfigGhcVersion = ConfigGhcVersion
+  deriving stock    (Show, Eq, Generic)
+  deriving anyclass (Hashable, Binary, FromJSON, NFData)
+
+type instance RuleResult ConfigGhcVersion = String
+
 
 data Config = Config
   { cfgRevision   :: String -- ^ Hackage revision
@@ -147,10 +155,11 @@ main = do
       case nm `Map.lookup` repo_set of
         Just s  -> pure s
         Nothing -> error $ "No such repository: " ++ nm
-    get_config <- addOracle $ \ConfigKey -> pure config
+    get_revision <- addOracle $ \ConfigRevisionKey -> pure $ cfgRevision   config
+    get_ghcver   <- addOracle $ \ConfigGhcVersion  -> pure $ cfgGhcVersion config
     -- Phony targets
     phony "clean" $ do
-      removeFilesAfter "nix" ["*"]
+      removeFilesAfter "nix/" ["pkgs/haskell/*.nix", "default.nix"]
       removeFilesAfter "."   [".shake"]
     phony "list-new" $ listNewPackages pkgs_set
     -- Show diff for package in set and latest version
@@ -178,21 +187,22 @@ main = do
     for_ (Map.keys pkgs_set) $ \pkg -> do
       let fname = "nix" </> packageNixName pkg
       fname %%> \_ -> do
-        cfg <- get_config ConfigKey
         let patch_name = "./patches" </> pkg <.> "nix" <.> "patch"
         exists <- doesFileExist patch_name
         when exists $ need [patch_name]
         let andPatch = when exists $ command_ [FileStdin patch_name] "patch" [fname]
+        ghc <- get_ghcver ConfigGhcVersion
         (get_source (PkgName pkg) <&> packageSource) >>= \case
           SourceCabal v           -> do
-            cabal2nixHackage fname pkg v cfg
+            rev <- get_revision ConfigRevisionKey
+            cabal2nixHackage fname pkg v rev ghc
             andPatch
           SourceGit git  msubpath -> do
-            cabal2nixGit fname git cfg msubpath
+            cabal2nixGit fname git ghc msubpath
             andPatch
           SourceRef repo msubpath -> do
             git <- get_git repo
-            cabal2nixGit fname git cfg msubpath >> andPatch
+            cabal2nixGit fname git ghc msubpath >> andPatch
     -- Building nix overlay
     "nix/default.nix" %%> \overlay -> do
       need $ (\x -> "nix" </> packageNixName x) <$> Map.keys pkgs_set
@@ -213,18 +223,18 @@ main = do
     want $ (\x -> "nix" </> packageNixName x) <$> Map.keys pkgs_set
     want ["nix/default.nix"]
 
-cabal2nixHackage :: FilePath -> String -> Version -> Config -> Action ()
-cabal2nixHackage fname pkg v cfg = command_ [FileStdout fname] "cabal2nix" $
+cabal2nixHackage :: FilePath -> String -> Version -> String -> String -> Action ()
+cabal2nixHackage fname pkg v rev ghc = command_ [FileStdout fname] "cabal2nix" $
   [ [fmt|cabal://{pkg}-{showVersion v}|]
-  , "--hackage-snapshot", cfgRevision   cfg
-  , "--compiler",         cfgGhcVersion cfg
+  , "--hackage-snapshot", rev
+  , "--compiler",         ghc
   ]
 
-cabal2nixGit :: FilePath -> Git -> Config -> Maybe String -> Action ()
-cabal2nixGit fname Git{..} cfg msubpath = command_ [FileStdout fname] "cabal2nix" $
+cabal2nixGit :: FilePath -> Git -> String -> Maybe String -> Action ()
+cabal2nixGit fname Git{..} ghc msubpath = command_ [FileStdout fname] "cabal2nix" $
   [ gitURL
   , "--revision", gitRev
-  , "--compiler", cfgGhcVersion cfg
+  , "--compiler", ghc
   ] ++
   case msubpath of
     Nothing -> []
