@@ -150,7 +150,7 @@ main = do
     get_config <- addOracle $ \ConfigKey -> pure config
     -- Phony targets
     phony "clean" $ do
-      removeFilesAfter "nix" ["*"]
+      removeFilesAfter "nix/" ["pkgs/haskell/*.nix", "default.nix"]
       removeFilesAfter "."   [".shake"]
     phony "list-new" $ listNewPackages pkgs_set
     -- Show diff for package in set and latest version
