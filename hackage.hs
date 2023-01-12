@@ -15,13 +15,18 @@
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE ViewPatterns               #-}
+module Main(main) where
+import Control.Applicative ((<|>))
 import Control.Monad (when)
 import Control.Monad.IO.Class
 import Control.DeepSeq
 import Development.Shake
 import Development.Shake.FilePath
 import Data.Aeson
+import Data.Char (isSpace)
 import Data.Maybe
+import Data.Functor
+import Data.List       (intercalate)
 import Data.List.Split (splitWhen)
 import Data.Yaml qualified as YAML
 import Data.Foldable
@@ -33,27 +38,55 @@ import PyF (fmt)
 import Text.ParserCombinators.ReadP (readP_to_S)
 import GHC.Generics (Generic)
 
-import Debug.Trace
-
 
 ----------------------------------------------------------------
 --
 ----------------------------------------------------------------
 
+-- | Key to lookup source for given package.
 newtype PkgName = PkgName String
   deriving stock   (Show, Eq, Generic)
   deriving newtype (Hashable, Binary, NFData)
 
-type instance RuleResult PkgName = Source
+type instance RuleResult PkgName = Package
 
+-- | Key to lookup repository information
 newtype Repository = Repository String
   deriving stock   (Show, Eq, Generic)
   deriving newtype (Hashable, Binary, FromJSON, NFData)
 
 type instance RuleResult Repository = Git
 
+-- | Key to obtain config
+data ConfigKey = ConfigKey
+  deriving stock    (Show, Eq, Generic)
+  deriving anyclass (Hashable, Binary, FromJSON, NFData)
 
--- | Source for package
+type instance RuleResult ConfigKey = Config
+
+data Config = Config
+  { cfgRevision   :: String -- ^ Hackage revision
+  , cfgGhcVersion :: String -- ^ GHC version to pass to cabal2nix
+  }
+  deriving stock    (Show, Eq, Generic)
+  deriving anyclass (Hashable, Binary, NFData)
+
+instance FromJSON Config where
+  parseJSON = withObject "Config" $ \o -> do
+    cfgRevision   <- o .: "revision"
+    cfgGhcVersion <- o .: "ghc_version"
+    pure Config{..}
+
+
+-- | Information about package.
+data Package = Package
+  { packageSource :: Source   -- ^ Source location for package
+  , packageParams :: [String] -- ^ Code fragments to pass to package
+  }
+  deriving stock    (Show, Eq, Generic)
+  deriving anyclass (Hashable, Binary, NFData)
+
+-- | Location of source code for package
 data Source
   = SourceCabal Version                   -- ^ Fetch package from hackage
   | SourceGit   Git        (Maybe String) -- ^ Fetch package from git
@@ -63,11 +96,19 @@ data Source
 
 -- | Information about git repository
 data Git = Git
-  { gitURL     :: String -- ^ URI of git repository
-  , gitRev     :: String -- ^ Revision to fetch
+  { gitURL :: String -- ^ URI of git repository
+  , gitRev :: String -- ^ Revision to fetch
   }
   deriving stock    (Show, Eq, Generic)
   deriving anyclass (Hashable, Binary, NFData)
+
+instance FromJSON Package where
+  parseJSON v@String{}   = do src <- parseJSON v
+                              pure $ Package src []
+  parseJSON v@(Object o) = do src   <- (SourceCabal <$> o .: "hackage") <|> parseJSON v
+                              param <- o .:? "parameters" .!= []
+                              pure $ Package src param
+  parseJSON _ = fail "Cannot parse package"
 
 instance FromJSON Source where
   parseJSON v@String{}   = SourceCabal <$> parseJSON v
@@ -79,17 +120,25 @@ instance FromJSON Source where
 
 instance FromJSON Git where
   parseJSON = withObject "Git" $ \o -> do
-    gitURL     <- o .: "git"
-    gitRev     <- o .: "rev"
+    gitURL <- o .: "git"
+    gitRev <- o .: "rev"
     pure Git{..}
+
+-- | Newtype wrapper which accepts NULL
+newtype OrNull a = OrNull (Map.Map String a)
+
+instance FromJSON a => FromJSON (OrNull a) where
+  parseJSON Null = pure $ OrNull mempty
+  parseJSON o    = OrNull <$> parseJSON o
 
 
 main :: IO ()
 main = do
   shakeArgs shakeOptions $ do
     -- Read list of packages to build and create necessary oracles
-    pkgs_set :: Map.Map String Source <- YAML.decodeFileThrow "packages.yaml"
-    repo_set :: Map.Map String Git    <- YAML.decodeFileThrow "repo.yaml"
+    OrNull pkgs_set :: OrNull Package <- YAML.decodeFileThrow "packages.yaml"
+    OrNull repo_set :: OrNull Git     <- YAML.decodeFileThrow "repo.yaml"
+    config <- YAML.decodeFileThrow "config.yaml"
     get_source <- addOracle $ \(PkgName nm) -> do
       case nm `Map.lookup` pkgs_set of
         Just s  -> pure s
@@ -98,10 +147,14 @@ main = do
       case nm `Map.lookup` repo_set of
         Just s  -> pure s
         Nothing -> error $ "No such repository: " ++ nm
+    get_config <- addOracle $ \ConfigKey -> pure config
     -- Phony targets
+    phony "clean" $ do
+      removeFilesAfter "nix" ["*"]
+      removeFilesAfter "."   [".shake"]
     phony "list-new" $ listNewPackages pkgs_set
     -- Show diff for package in set and latest version
-    forM_ [(k,v) | (k, SourceCabal v) <- Map.toList pkgs_set] $ \(pkg, v) -> do
+    forM_ [(k,v) | (k, SourceCabal v) <- Map.toList (packageSource <$> pkgs_set)] $ \(pkg, v) -> do
       phony ("diff@"<>pkg) $ do
         liftIO $ do putStrLn pkg
                     print v
@@ -125,29 +178,34 @@ main = do
     for_ (Map.keys pkgs_set) $ \pkg -> do
       let fname = "nix" </> packageNixName pkg
       fname %%> \_ -> do
+        cfg <- get_config ConfigKey
         let patch_name = "./patches" </> pkg <.> "nix" <.> "patch"
         exists <- doesFileExist patch_name
-        when (exists) $ need [patch_name]
-        let andPatch = when (exists) $ command_ [FileStdin patch_name] "patch" [fname]
-        get_source (PkgName pkg) >>= \case
+        when exists $ need [patch_name]
+        let andPatch = when exists $ command_ [FileStdin patch_name] "patch" [fname]
+        (get_source (PkgName pkg) <&> packageSource) >>= \case
           SourceCabal v           -> do
-            mrevision <- listToMaybe <$> readFileLines "hackage-revision.txt" -- FIXME !!
-            cabal2nixHackage fname pkg v mrevision
+            cabal2nixHackage fname pkg v cfg
             andPatch
           SourceGit git  msubpath -> do
-            cabal2nixGit fname git msubpath
+            cabal2nixGit fname git cfg msubpath
             andPatch
           SourceRef repo msubpath -> do
             git <- get_git repo
-            cabal2nixGit fname git msubpath >> andPatch
+            cabal2nixGit fname git cfg msubpath >> andPatch
     -- Building nix overlay
     "nix/default.nix" %%> \overlay -> do
       need $ (\x -> "nix" </> packageNixName x) <$> Map.keys pkgs_set
       need ["packages.yaml", "repo.yaml"]
       liftIO $ writeFile overlay $ unlines $ concat
-        [ [ "lib: prev: {" ]
-        , [ [fmt|  {nm} = lib.doJailbreak (lib.disableLibraryProfiling (lib.dontCheck (prev.callPackage ./{packageNixName nm} {{}})));|]
-          | nm <- Map.keys pkgs_set
+        [ [ "lib: prev:"
+          , "let"
+          , "  adjust = drv: lib.doJailbreak (lib.disableLibraryProfiling (lib.dontCheck drv));"
+          , "in"
+          , "{"
+          ]
+        , [ [fmt|  {nm} = adjust (prev.callPackage ./{packageNixName nm} {{ {concat $ fmap (++";") param} }});|]
+          | (nm, Package{packageParams=param}) <- Map.toList pkgs_set
           ]
         , ["}"]
         ]
@@ -155,15 +213,18 @@ main = do
     want $ (\x -> "nix" </> packageNixName x) <$> Map.keys pkgs_set
     want ["nix/default.nix"]
 
-cabal2nixHackage :: FilePath -> String -> Version -> Maybe String -> Action ()
-cabal2nixHackage fname pkg v mrevision = command_ [FileStdout fname] "cabal2nix" $
-  [ [fmt|cabal://{pkg}-{showVersion v}|] ]
-     <> maybe [] (\revision  -> ["--hackage-snapshot", revision]) mrevision
+cabal2nixHackage :: FilePath -> String -> Version -> Config -> Action ()
+cabal2nixHackage fname pkg v cfg = command_ [FileStdout fname] "cabal2nix" $
+  [ [fmt|cabal://{pkg}-{showVersion v}|]
+  , "--hackage-snapshot", cfgRevision   cfg
+  , "--compiler",         cfgGhcVersion cfg
+  ]
 
-cabal2nixGit :: FilePath -> Git -> Maybe String -> Action ()
-cabal2nixGit fname Git{..} msubpath = command_ [FileStdout fname] "cabal2nix" $
+cabal2nixGit :: FilePath -> Git -> Config -> Maybe String -> Action ()
+cabal2nixGit fname Git{..} cfg msubpath = command_ [FileStdout fname] "cabal2nix" $
   [ gitURL
   , "--revision", gitRev
+  , "--compiler", cfgGhcVersion cfg
   ] ++
   case msubpath of
     Nothing -> []
@@ -175,11 +236,11 @@ cabal2nixGit fname Git{..} msubpath = command_ [FileStdout fname] "cabal2nix" $
 -- latest version
 ----------------------------------------------------------------
 
-listNewPackages :: Map.Map String Source -> Action ()
+listNewPackages :: Map.Map String Package -> Action ()
 listNewPackages pkgs = do
   StdoutTrim str <- command [] "bash" ["-c", "tar tf ~/.cabal/packages/hackage.haskell.org/01-index.tar.gz"]
   let hackage_ver = Map.fromListWith max $ mapMaybe parseIndexLine $ lines str
-      local_ver   = Map.mapMaybe (\x -> do { SourceCabal v <- Just x; pure v }) pkgs
+      local_ver   = Map.mapMaybe (\x -> do { SourceCabal v <- Just (packageSource x); pure v }) pkgs
       -- Select only versions that are newer on hackage
       (patch_new, newer) = Map.partition (uncurry onlyPatchVersionDiff)
                          $ Map.filter    (uncurry (<))
