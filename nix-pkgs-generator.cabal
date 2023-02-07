@@ -2,19 +2,30 @@ Cabal-Version:  2.2
 Name:           nix-pkgs-generator
 Version:        0.1
 Synopsis:       Generator of nix overlay from YAML description
+Description:
+  This package contain program which generates nix overlay from
+  description in YAML file. It uses shake in order to be able to rebuild
+  only derivation that should be changed
 
 License:        MPL-2.0
 License-File:   LICENSE
 Copyright:      2022 АНО Сириус-Курсы, 2023 Alexey Khudyakov
-Maintainer:     XXX
+Maintainer:     backend-dev@sirius.online, Alexey Khudyakov <alexey.skladnoy@gmail.com>
 Category:       Nix
 Build-Type:     Simple
+
+Homepage:       https://github.com/cheopslab/nix-pkgs-generator
+Bug-Reports:    https://github.com/cheopslab/nix-pkgs-generator/issues
+
+source-repository head
+  type:     git
+  location: https://github.com/cheopslab/nix-pkgs-generator.git
 
 executable nix-pkgs-generator
   Ghc-options:      -Wall
   Default-Language: Haskell2010
   main-is:          hackage.hs
-  Build-Depends:    base
+  Build-Depends:    base        >=4.12 && <5
                   , PyF         >=0.10
                   , aeson       >=2
                   , binary
