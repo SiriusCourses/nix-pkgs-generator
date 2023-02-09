@@ -22,11 +22,9 @@ import Control.Monad.IO.Class
 import Control.DeepSeq
 import Development.Shake
 import Development.Shake.FilePath
-import Data.Aeson
-import Data.Char (isSpace)
+import Data.Aeson (Value(..),FromJSON(..),(.:),(.:?),(.!=),withObject)
 import Data.Maybe
 import Data.Functor
-import Data.List       (intercalate)
 import Data.List.Split (splitWhen)
 import Data.Yaml qualified as YAML
 import Data.Foldable
