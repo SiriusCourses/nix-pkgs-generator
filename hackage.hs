@@ -23,10 +23,12 @@ import Control.DeepSeq
 import Development.Shake
 import Development.Shake.FilePath
 import Data.Aeson (Value(..),FromJSON(..),(.:),(.:?),(.!=),withObject)
+import Data.Ord
 import Data.Maybe
 import Data.Functor
+import Data.List (sortOn,isPrefixOf,isSuffixOf)
 import Data.List.Split (splitWhen)
-import Data.Yaml qualified as YAML
+import Data.Yaml.Config qualified as YAML
 import Data.Foldable
 import Data.Hashable (Hashable(..))
 import Data.Binary (Binary)
@@ -34,6 +36,7 @@ import Data.Version
 import Data.Map.Strict qualified as Map
 import PyF (fmt)
 import Text.ParserCombinators.ReadP (readP_to_S)
+import System.Directory qualified as Dir (getDirectoryContents)
 import GHC.Generics (Generic)
 
 
@@ -141,10 +144,20 @@ instance FromJSON a => FromJSON (OrNull a) where
 main :: IO ()
 main = do
   shakeArgs shakeOptions $ do
-    -- Read list of packages to build and create necessary oracles
-    OrNull pkgs_set :: OrNull Package <- YAML.decodeFileThrow "packages.yaml"
-    OrNull repo_set :: OrNull Git     <- YAML.decodeFileThrow "repo.yaml"
-    config <- YAML.decodeFileThrow "config.yaml"
+    -- We read list of files for
+    (pkgs_set, repo_set, config) <- do
+      files <- liftIO $ Dir.getDirectoryContents "."
+      let yamlWithPrefix pfx = sortOn Down [ path | path <- files
+                                                  , pfx     `isPrefixOf` path
+                                                  , ".yaml" `isSuffixOf` path
+                                                  ]
+          loadYaml :: FromJSON a => FilePath -> Rules a
+          loadYaml pfx = liftIO $ YAML.loadYamlSettings (yamlWithPrefix pfx) [] YAML.ignoreEnv
+      -- Read list of packages to build and create necessary oracles
+      OrNull pkgs_set :: OrNull Package <- loadYaml "packages"
+      OrNull repo_set :: OrNull Git     <- loadYaml "repo"
+      config          :: Config         <- loadYaml "config"
+      pure (pkgs_set, repo_set, config)
     get_source <- addOracle $ \(PkgName nm) -> do
       case nm `Map.lookup` pkgs_set of
         Just s  -> pure s
