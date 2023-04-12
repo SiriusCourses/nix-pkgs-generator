@@ -219,8 +219,9 @@ main = do
       need $ (\x -> "nix" </> packageNixName x) <$> Map.keys pkgs_set
       need ["packages.yaml", "repo.yaml"]
       liftIO $ writeFile overlay $ unlines $ concat
-        [ [ "lib: prev:"
+        [ [ "pkgs: prev:"
           , "let"
+          , "  lib = pkgs.haskell.lib;"
           , "  adjust = drv: lib.doJailbreak (lib.disableLibraryProfiling (lib.dontCheck drv));"
           , "in"
           , "{"
