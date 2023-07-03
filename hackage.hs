@@ -72,10 +72,34 @@ data ConfigGhcVersion = ConfigGhcVersion
 
 type instance RuleResult ConfigGhcVersion = String
 
+-- | Key to obtain GHC version
+data ConfigHaddock = ConfigHaddock
+  deriving stock    (Show, Eq, Generic)
+  deriving anyclass (Hashable, Binary, FromJSON, NFData)
+
+type instance RuleResult ConfigHaddock = Bool
+
+-- | Key to obtain GHC version
+data ConfigProfile = ConfigProfile
+  deriving stock    (Show, Eq, Generic)
+  deriving anyclass (Hashable, Binary, FromJSON, NFData)
+
+type instance RuleResult ConfigProfile = Bool
+
+-- | Key to obtain GHC version
+data ConfigTests = ConfigTests
+  deriving stock    (Show, Eq, Generic)
+  deriving anyclass (Hashable, Binary, FromJSON, NFData)
+
+type instance RuleResult ConfigTests = Bool
+
 
 data Config = Config
-  { cfgRevision   :: String -- ^ Hackage revision
-  , cfgGhcVersion :: String -- ^ GHC version to pass to cabal2nix
+  { cfgRevision   :: !String -- ^ Hackage revision
+  , cfgGhcVersion :: !String -- ^ GHC version to pass to cabal2nix
+  , cfgProfile    :: !Bool   -- ^ Whether to build profiling
+  , cfgHaddock    :: !Bool   -- ^ Whether to build haddocks
+  , cfgTests      :: !Bool
   }
   deriving stock    (Show, Eq, Generic)
   deriving anyclass (Hashable, Binary, NFData)
@@ -84,6 +108,9 @@ instance FromJSON Config where
   parseJSON = withObject "Config" $ \o -> do
     cfgRevision   <- o .: "revision"
     cfgGhcVersion <- o .: "ghc_version"
+    cfgProfile    <- o .:? "profile" .!= False
+    cfgHaddock    <- o .:? "haddock" .!= False
+    cfgTests      <- o .:? "tests"   .!= False
     pure Config{..}
 
 
@@ -168,6 +195,9 @@ main = do
         Nothing -> error $ "No such repository: " ++ nm
     get_revision <- addOracle $ \ConfigRevisionKey -> pure $ cfgRevision   config
     get_ghcver   <- addOracle $ \ConfigGhcVersion  -> pure $ cfgGhcVersion config
+    get_profile  <- addOracle $ \ConfigProfile     -> pure $ cfgProfile    config
+    get_haddock  <- addOracle $ \ConfigHaddock     -> pure $ cfgHaddock    config
+    get_tests    <- addOracle $ \ConfigTests       -> pure $ cfgTests      config
     -- Phony targets
     phony "clean" $ do
       removeFilesAfter "nix/" ["pkgs/haskell/*.nix", "default.nix"]
@@ -218,11 +248,20 @@ main = do
     "nix/default.nix" %%> \overlay -> do
       need $ (\x -> "nix" </> packageNixName x) <$> Map.keys pkgs_set
       need ["packages.yaml", "repo.yaml"]
+      haddock::String <- get_haddock ConfigHaddock <&> \case
+        True  -> "lib.doHaddock"
+        False -> "lib.dontHaddock"
+      tests::String <- get_tests ConfigTests <&> \case
+        True  -> "lib.doCheck"
+        False -> "lib.dontCheck"
+      profile::String <- get_profile ConfigProfile <&> \case
+        True  -> "lib.enableLibraryProfiling"
+        False -> "lib.disableLibraryProfiling"
       liftIO $ writeFile overlay $ unlines $ concat
         [ [ "pkgs: prev:"
           , "let"
           , "  lib = pkgs.haskell.lib;"
-          , "  adjust = drv: lib.doJailbreak (lib.disableLibraryProfiling (lib.dontCheck drv));"
+          , [fmt|  adjust = drv: lib.doJailbreak ({profile} ({haddock} ({tests} drv)));|]
           , "in"
           , "{"
           ]
