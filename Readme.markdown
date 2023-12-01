@@ -44,6 +44,11 @@ alphanumerically and value from later files take precedence
   - `revision` hackage revision.
   - `ghc_version` GHC version to be used by `cabal2nix`. Generated files could
     be different for different GHC versions.
+  - `profile` -- boolean flag on whether compile libraries with or without
+    profiling support. Default is false.
+  - `haddock` -- boolean flag on whether to build haddocks. Default is false.
+  - `tests` -- boolean flag on whether to run tests when building
+    package. Default is false.
 
 For example:
 
