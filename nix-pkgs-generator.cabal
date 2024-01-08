@@ -35,3 +35,4 @@ executable nix-pkgs-generator
                   , shake       >=0.19
                   , split       >=0.2
                   , yaml        >=0.11
+                  , directory   >=1.3

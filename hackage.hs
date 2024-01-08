@@ -23,10 +23,12 @@ import Control.DeepSeq
 import Development.Shake
 import Development.Shake.FilePath
 import Data.Aeson (Value(..),FromJSON(..),(.:),(.:?),(.!=),withObject)
+import Data.Ord
 import Data.Maybe
 import Data.Functor
+import Data.List (sortOn,isPrefixOf,isSuffixOf)
 import Data.List.Split (splitWhen)
-import Data.Yaml qualified as YAML
+import Data.Yaml.Config qualified as YAML
 import Data.Foldable
 import Data.Hashable (Hashable(..))
 import Data.Binary (Binary)
@@ -34,6 +36,7 @@ import Data.Version
 import Data.Map.Strict qualified as Map
 import PyF (fmt)
 import Text.ParserCombinators.ReadP (readP_to_S)
+import System.Directory qualified as Dir (getDirectoryContents)
 import GHC.Generics (Generic)
 
 
@@ -69,10 +72,34 @@ data ConfigGhcVersion = ConfigGhcVersion
 
 type instance RuleResult ConfigGhcVersion = String
 
+-- | Key to obtain GHC version
+data ConfigHaddock = ConfigHaddock
+  deriving stock    (Show, Eq, Generic)
+  deriving anyclass (Hashable, Binary, FromJSON, NFData)
+
+type instance RuleResult ConfigHaddock = Bool
+
+-- | Key to obtain GHC version
+data ConfigProfile = ConfigProfile
+  deriving stock    (Show, Eq, Generic)
+  deriving anyclass (Hashable, Binary, FromJSON, NFData)
+
+type instance RuleResult ConfigProfile = Bool
+
+-- | Key to obtain GHC version
+data ConfigTests = ConfigTests
+  deriving stock    (Show, Eq, Generic)
+  deriving anyclass (Hashable, Binary, FromJSON, NFData)
+
+type instance RuleResult ConfigTests = Bool
+
 
 data Config = Config
-  { cfgRevision   :: String -- ^ Hackage revision
-  , cfgGhcVersion :: String -- ^ GHC version to pass to cabal2nix
+  { cfgRevision   :: !String -- ^ Hackage revision
+  , cfgGhcVersion :: !String -- ^ GHC version to pass to cabal2nix
+  , cfgProfile    :: !Bool   -- ^ Whether to build profiling
+  , cfgHaddock    :: !Bool   -- ^ Whether to build haddocks
+  , cfgTests      :: !Bool
   }
   deriving stock    (Show, Eq, Generic)
   deriving anyclass (Hashable, Binary, NFData)
@@ -81,6 +108,9 @@ instance FromJSON Config where
   parseJSON = withObject "Config" $ \o -> do
     cfgRevision   <- o .: "revision"
     cfgGhcVersion <- o .: "ghc_version"
+    cfgProfile    <- o .:? "profile" .!= False
+    cfgHaddock    <- o .:? "haddock" .!= False
+    cfgTests      <- o .:? "tests"   .!= False
     pure Config{..}
 
 
@@ -141,10 +171,20 @@ instance FromJSON a => FromJSON (OrNull a) where
 main :: IO ()
 main = do
   shakeArgs shakeOptions $ do
-    -- Read list of packages to build and create necessary oracles
-    OrNull pkgs_set :: OrNull Package <- YAML.decodeFileThrow "packages.yaml"
-    OrNull repo_set :: OrNull Git     <- YAML.decodeFileThrow "repo.yaml"
-    config <- YAML.decodeFileThrow "config.yaml"
+    -- We read list of files for
+    (pkgs_set, repo_set, config) <- do
+      files <- liftIO $ Dir.getDirectoryContents "."
+      let yamlWithPrefix pfx = sortOn Down [ path | path <- files
+                                                  , pfx     `isPrefixOf` path
+                                                  , ".yaml" `isSuffixOf` path
+                                                  ]
+          loadYaml :: FromJSON a => FilePath -> Rules a
+          loadYaml pfx = liftIO $ YAML.loadYamlSettings (yamlWithPrefix pfx) [] YAML.ignoreEnv
+      -- Read list of packages to build and create necessary oracles
+      OrNull pkgs_set :: OrNull Package <- loadYaml "packages"
+      OrNull repo_set :: OrNull Git     <- loadYaml "repo"
+      config          :: Config         <- loadYaml "config"
+      pure (pkgs_set, repo_set, config)
     get_source <- addOracle $ \(PkgName nm) -> do
       case nm `Map.lookup` pkgs_set of
         Just s  -> pure s
@@ -155,6 +195,9 @@ main = do
         Nothing -> error $ "No such repository: " ++ nm
     get_revision <- addOracle $ \ConfigRevisionKey -> pure $ cfgRevision   config
     get_ghcver   <- addOracle $ \ConfigGhcVersion  -> pure $ cfgGhcVersion config
+    get_profile  <- addOracle $ \ConfigProfile     -> pure $ cfgProfile    config
+    get_haddock  <- addOracle $ \ConfigHaddock     -> pure $ cfgHaddock    config
+    get_tests    <- addOracle $ \ConfigTests       -> pure $ cfgTests      config
     -- Phony targets
     phony "clean" $ do
       removeFilesAfter "nix/" ["pkgs/haskell/*.nix", "default.nix"]
@@ -205,10 +248,20 @@ main = do
     "nix/default.nix" %%> \overlay -> do
       need $ (\x -> "nix" </> packageNixName x) <$> Map.keys pkgs_set
       need ["packages.yaml", "repo.yaml"]
+      haddock::String <- get_haddock ConfigHaddock <&> \case
+        True  -> "lib.doHaddock"
+        False -> "lib.dontHaddock"
+      tests::String <- get_tests ConfigTests <&> \case
+        True  -> "lib.doCheck"
+        False -> "lib.dontCheck"
+      profile::String <- get_profile ConfigProfile <&> \case
+        True  -> "lib.enableLibraryProfiling"
+        False -> "lib.disableLibraryProfiling"
       liftIO $ writeFile overlay $ unlines $ concat
-        [ [ "lib: prev:"
+        [ [ "pkgs: prev:"
           , "let"
-          , "  adjust = drv: lib.doJailbreak (lib.disableLibraryProfiling (lib.dontCheck drv));"
+          , "  lib = pkgs.haskell.lib;"
+          , [fmt|  adjust = drv: lib.doJailbreak ({profile} ({haddock} ({tests} drv)));|]
           , "in"
           , "{"
           ]

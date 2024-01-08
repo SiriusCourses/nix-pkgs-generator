@@ -35,14 +35,20 @@ To cleanup your local environment:
 [nix-shell:nixpkgs]$ runhaskell ./hackage.hs clean
 ```
 
-Inputs:
+Inputs are read from several YAML files. During import file names are sorted
+alphanumerically and value from later files take precedence
 
-* `packages.yaml` -- list of the packages controlled by the system
-* `repo.yaml` -- list of repositories that `packages.yaml` can link to.
-* `config.yaml` -- setting common for all packages.
+* `packages*.yaml` -- list of the packages controlled by the system
+* `repo*.yaml` -- list of repositories that `packages.yaml` can link to.
+* `config*.yaml` -- setting common for all packages.
   - `revision` hackage revision.
   - `ghc_version` GHC version to be used by `cabal2nix`. Generated files could
     be different for different GHC versions.
+  - `profile` -- boolean flag on whether compile libraries with or without
+    profiling support. Default is false.
+  - `haddock` -- boolean flag on whether to build haddocks. Default is false.
+  - `tests` -- boolean flag on whether to run tests when building
+    package. Default is false.
 
 For example:
 
