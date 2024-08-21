@@ -136,8 +136,8 @@ cabal solution:
 1. Create `cabal.project` in new directory list all packages that are fetched
    from git there.
 
-2. Run `cabal build all` and immediately interrupt build. We are only interested
-   in build plan. Make sure to use same GHC version since build plan *depends*
+2. Run `cabal build all --only-configure` to generate the build plan. 
+   Make sure to use same GHC version since build plan *depends*
    on it.
 
 3. Run `./sh/extract-cabal.sh path/to/project_dir`. It will produce list of
