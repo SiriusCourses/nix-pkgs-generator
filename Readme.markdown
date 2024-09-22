@@ -49,6 +49,8 @@ alphanumerically and value from later files take precedence
   - `haddock` -- boolean flag on whether to build haddocks. Default is false.
   - `tests` -- boolean flag on whether to run tests when building
     package. Default is false.
+  - `jailbreak` -- boolean flag on whether to jailbreak packages. If true cabal
+    won't check dependencies' versions. Default is true.
 
 For example:
 
@@ -105,6 +107,9 @@ dummy dependency `testu01`. This allows to provide dependencies.
 ```
   splitmix = ... (prev.callPackage ./pkgs/haskell/splitmix.nix { testu01=null; });
 ```
+
+Field `jailbreak` could be specified for each package. It true nix package will
+be jailbroken (cabal won't check dependencies versions)
 
 * `patches` - contains patches that are applied to the nix files (will be modified in the future)
 
